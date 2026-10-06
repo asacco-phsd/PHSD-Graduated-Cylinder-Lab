@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Graduated Cylinder Virtual Lab</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.4 system-ui,Arial,sans-serif;background:#f3f6f9;color:#1d2b36}
+h1{font-size:20px;margin:0;padding:10px 14px;background:#1f5f8b;color:#fff}
+#grid{max-width:860px;margin:0 auto;padding:12px}
+section{background:#fff;border:1px solid #d3dde6;border-radius:10px;padding:10px;min-width:0}
+button{font:inherit;padding:6px 10px;border:1px solid #1f5f8b;background:#fff;color:#1f5f8b;border-radius:6px;cursor:pointer}
+button:hover{background:#e6f1f9}button.pri{background:#1f5f8b;color:#fff}
+#bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+details{margin-top:6px;font-size:13px}
+#wrap{overflow:hidden;border-radius:8px;border:1px solid #b9c7d3;margin:8px 0}
+#stage{position:relative;width:800px;height:520px;transform-origin:0 0;background:linear-gradient(#eef5fa,#dce8f1)}
+.shelf{position:absolute;left:0;right:0;background:#b98a58;border-top:3px solid #8a6038}
+.it{position:absolute}.it:not(.fx){cursor:grab;touch-action:none}.fx{cursor:default}
+.it.drag{cursor:grabbing;filter:drop-shadow(0 6px 6px rgba(0,0,0,.3))}
+.cap{position:absolute;top:100%;left:50%;transform:translateX(-50%);font-size:11px;white-space:nowrap;pointer-events:none;color:#222}
+#msg{padding:8px 10px;border-radius:6px;background:#eaf5ea;border:1px solid #b9dcb9;min-height:42px}#msg.bad{background:#fdecea;border-color:#f1b5ae}
+.ov{position:fixed;inset:0;background:rgba(20,35,50,.6);display:none;align-items:center;justify-content:center;z-index:99;padding:10px}.ov.on{display:flex}
+.box{background:#fff;border-radius:12px;padding:16px;max-width:540px;max-height:90vh;overflow:auto;text-align:center}
+.box h3{margin:0 0 8px}
+table{border-collapse:collapse;margin-bottom:6px}th,td{border:1px solid #cdd8e1;padding:5px 8px;text-align:left}
+</style></head><body>
+<h1>🧪 The Graduated Cylinder Virtual Lab</h1>
+<div id="grid">
+<section id="lab">
+ <div id="bar"><button id="bHelp">📘 Equipment manual</button><button id="bZoom">🔍 Zoom meniscus</button><button id="reset">↺ Reset lab</button></div>
+ <details><summary>How to use the lab</summary>Drag the <b>pitcher</b> onto the test tube, cup, or beaker to fill it. Drag a filled test tube, cup, or beaker onto the <b>graduated cylinder</b> to pour it in. Drag any filled piece of equipment onto the <b>sink</b> to empty it. The cylinder only holds 100&nbsp;mL — watch what happens if you try to pour in more. Use your handout to record what you measure.</details>
+ <div id="wrap"><div id="stage"></div></div>
+ <div id="msg"></div>
+</section>
+</div>
+<div id="modal" class="ov"><div class="box" id="mb"></div></div>
+<script>
+(()=>{
+const $=s=>document.querySelector(s),S=$('#stage'),cl=(v,a,b)=>Math.max(a,Math.min(b,v));
+let I,E,sc=1,drag=null;
+const C=()=>({w:0});
+const say=(t,bad)=>{const m=$('#msg');m.textContent=t;m.className=bad?'bad':'';return true};
+const ok=t=>say(t,0);
+const svg=(w,h,s)=>`<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">${s}</svg>`;
+const modal=h=>{$('#mb').innerHTML=h+'<p><button data-x class="pri">Close</button></p>';$('#modal').classList.add('on')};
+
+function trap(bottomW,topW,height,baseY,cx,frac){
+ frac=Math.max(0,Math.min(1,frac));
+ const liqH=height*frac,yTop=baseY-liqH,wTop=bottomW+(topW-bottomW)*frac;
+ const bl=cx-bottomW/2,br=cx+bottomW/2,tl=cx-wTop/2,tr=cx+wTop/2;
+ return `${bl},${baseY} ${br},${baseY} ${tr},${yTop} ${tl},${yTop}`;
+}
+
+/* graduated cylinder rendering — ticks + a meniscus whose true reading sits at the
+   bottom of the curve (the valley), not where the liquid meets the glass */
+function cylMath(w,h){
+ const min=0,max=100,majorStep=10,minorStep=2;
+ const bl=w*0.3,br=w*0.72,bw=br-bl,topY=h*0.07,botY=h*0.88;
+ const yFor=v=>botY-((v-min)/(max-min))*(botY-topY);
+ return{min,max,majorStep,minorStep,bl,br,bw,topY,botY,yFor};
+}
+function cylTicksAndLiquid(m,val,fontSize,haloW){
+ const{bl,br,bw,topY,botY,yFor,min,max,majorStep,minorStep}=m;
+ const yValley=yFor(val),dip=Math.max(3,bw*0.16),yEdge=yValley-dip,yCtrl=yValley+dip,midX=(bl+br)/2;
+ let s=`<rect x="${bl-7}" y="${botY+5}" width="${bw+14}" height="${(botY-topY)*0.05+6}" rx="4" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2"/>`;
+ s+=`<rect x="${bl}" y="${topY-6}" width="${bw}" height="${(botY-topY)+10}" rx="6" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2"/>`;
+ s+=`<path d="M ${bl} ${botY} L ${bl} ${yEdge} Q ${midX} ${yCtrl} ${br} ${yEdge} L ${br} ${botY} Z" fill="#3e7cb1" opacity=".82"/>`;
+ const steps=Math.round((max-min)/minorStep);
+ for(let i=0;i<=steps;i++){
+  const v=min+i*minorStep,y=yFor(v);
+  const isMaj=Math.abs(Math.round(v/majorStep)*majorStep-v)<(minorStep/2);
+  const tl=isMaj?bw*0.4:bw*0.18;
+  s+=`<line x1="${br-tl}" y1="${y}" x2="${br}" y2="${y}" stroke="#eef3f8" stroke-width="${isMaj?haloW+2:haloW+1}"/>`;
+  s+=`<line x1="${br-tl}" y1="${y}" x2="${br}" y2="${y}" stroke="#4c5a4f" stroke-width="${isMaj?2:1}"/>`;
+  if(isMaj)s+=`<text x="${br-tl-4}" y="${y+3.5}" text-anchor="end" font-family="monospace" font-size="${fontSize}" fill="#1e2a22">${v}</text>`;
+ }
+ return s;
+}
+function cylItemSVG(w,h,val){
+ const m=cylMath(w,h);
+ return svg(w,h,cylTicksAndLiquid(m,val,Math.max(8,w*0.085),1));
+}
+function cylZoomSVG(val){
+ const w=160,h=360,m=cylMath(w,h);
+ const yValley=m.yFor(val),crop=34,y0=yValley-crop,vh=crop*2;
+ const body=cylTicksAndLiquid(m,val,14,1.5);
+ const displayW=280,displayH=Math.round(displayW*vh/w);
+ return `<svg viewBox="0 ${y0} ${w} ${vh}" width="${displayW}" height="${displayH}" style="background:#fff;border-radius:8px">${body}</svg>`;
+}
+
+function draw(i){
+ const c=i.c,frac=i.cap?Math.max(0,Math.min(1,c.w/i.cap)):0;
+ if(i.k=='pitcher')return svg(60,100,
+  `<path d="M15 14H45L50 20V26H44L40 92A4 4 0 0 1 36 96H24A4 4 0 0 1 20 92L16 26H10V20Z" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2.5"/>
+   <path d="M18 46L21 90A2 2 0 0 0 23 92H37A2 2 0 0 0 39 90L42 46Z" fill="#3e7cb1" opacity=".85"/>
+   <path d="M15 14H45" stroke="#9fb0c0" stroke-width="2.5"/>`);
+ if(i.k=='sink')return svg(140,70,
+  `<rect x="10" y="26" width="120" height="16" rx="4" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2.5"/>
+   <path d="M70 6V24M60 14L70 6L80 14" stroke="#9fb0c0" stroke-width="2.5" fill="none"/>
+   <ellipse cx="70" cy="44" rx="56" ry="9" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2.5"/>`);
+ if(i.k=='cylinder')return cylItemSVG(i.w,i.h,c.w);
+ if(i.k=='container'){
+  if(i.shape=='tube'){
+   const liqH=66*frac;
+   return svg(i.w,i.h,`<defs><clipPath id="cl${i.id}"><path d="M6 4H24V74A9 9 0 0 1 6 74Z"/></clipPath></defs>
+    <path d="M6 4H24V74A9 9 0 0 1 6 74Z" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2"/>
+    <g clip-path="url(#cl${i.id})">${frac>0?`<rect x="0" y="${78-liqH}" width="30" height="${liqH}" fill="#3e7cb1" opacity=".82"/>`:''}</g>
+    <path d="M6 4H24V74A9 9 0 0 1 6 74Z" fill="none" stroke="#9fb0c0" stroke-width="2"/>
+    <path d="M3 4H27" stroke="#9fb0c0" stroke-width="2.5"/>`);
+  }
+  if(i.shape=='cup'){
+   const pts=trap(18,34,72,84,33,frac);
+   return svg(i.w,i.h,`<polygon points="16,10 50,10 42,84 24,84" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2.5"/>
+    <polygon points="${pts}" fill="#3e7cb1" opacity=".82"/>
+    <line x1="19" y1="26" x2="47" y2="26" stroke="#b5711f" stroke-width="2" stroke-dasharray="3 2"/>`);
+  }
+  if(i.shape=='beaker'){
+   const pts=trap(60,36,82,90,40,frac);
+   return svg(i.w,i.h,`<polygon points="22,8 58,8 70,90 10,90" fill="#eef3f8" stroke="#9fb0c0" stroke-width="2.5"/>
+    <polygon points="${pts}" fill="#3e7cb1" opacity=".82"/>
+    <line x1="13" y1="38" x2="67" y2="38" stroke="#b5711f" stroke-width="2" stroke-dasharray="3 2"/>
+    <text x="40" y="34" text-anchor="middle" font-family="monospace" font-size="9" fill="#b5711f">150</text>`);
+  }
+ }
+ return'';
+}
+
+function isFillable(t){return t.k=='container'}
+function isPourable(i){return i.k=='container'||i.k=='cylinder'}
+
+function act(d,t){
+ const D=d.k,T=t.k;
+ if(D=='pitcher'&&isFillable(t)){
+  t.c.w=t.cap;
+  const how=t.shape=='tube'?'completely':t.shape=='cup'?'to its fill line':'to its 150 mL mark';
+  return ok('Filled the '+t.n+' '+how+'.');
+ }
+ if(D=='pitcher'&&T=='cylinder')return say('Fill a container first, then pour that into the cylinder.',1);
+ if(isPourable(d)&&T=='cylinder'&&d!==t){
+  if(d.c.w<=0)return say('The '+d.n+' is empty — fill it with the pitcher first.',1);
+  const space=t.cap-t.c.w,amt=d.c.w,poured=Math.min(amt,space);
+  t.c.w+=poured;d.c.w-=poured;
+  if(poured<amt)return say('Overflow! The cylinder only holds '+t.cap+' mL. About '+Math.round(d.c.w)+' mL is still in the '+d.n+'.',1);
+  return ok('Poured the '+d.n+' into the cylinder.');
+ }
+ if(isPourable(d)&&T=='sink'){
+  if(d.c.w<=0)return say('The '+d.n+' is already empty.',0);
+  d.c.w=0;return ok('Emptied the '+d.n+' into the sink.');
+ }
+}
+
+function pos(){for(const id in I){E[id].style.left=I[id].x+'px';E[id].style.top=I[id].y+'px'}}
+function render(){for(const id in I)E[id].innerHTML=draw(I[id])+'<div class="cap">'+I[id].n+'</div>';pos()}
+
+function drop(i){
+ const m=10,cx=i.x+i.w/2,cy=i.y+i.h/2;
+ for(const t of Object.values(I)){
+  if(t===i)continue;
+  if(cx<t.x-m||cx>t.x+t.w+m||cy<t.y-m||cy>t.y+t.h+m)continue;
+  if(act(i,t))break;
+ }
+ if(i.home){i.x=i.home[0];i.y=i.home[1]}
+ E[i.id].style.zIndex='';E[i.id].classList.remove('drag');
+ render();
+}
+
+function init(){
+ I={};
+ const d=(id,k,n,x,y,w,h,o)=>I[id]={id,k,n,x,y,w,h,c:C(),...o};
+ d('pt','pitcher','Water pitcher',20,50,60,100,{home:[20,50]});
+ d('tt','container','Test tube (16×150 mm)',112,60,30,90,{cap:23,shape:'tube',home:[112,60]});
+ d('cp','container','Plastic cup',172,58,66,92,{cap:87,shape:'cup',home:[172,58]});
+ d('bk','container','250 mL beaker',270,52,80,98,{cap:149,shape:'beaker',home:[270,52]});
+ d('cy','cylinder','Graduated cylinder',480,128,90,300,{cap:100,home:[480,128]});
+ d('sk','sink','Sink',600,358,140,70,{fx:1});
+ S.innerHTML='<div class="shelf" style="top:150px;height:20px"></div><div class="shelf" style="top:428px;height:92px"></div>';
+ E={};
+ for(const id in I){
+  const i=I[id],e=document.createElement('div');
+  e.className='it'+(i.fx?' fx':'');e.dataset.id=id;
+  e.style.width=i.w+'px';e.style.height=i.h+'px';
+  S.appendChild(e);E[id]=e;
+ }
+ say('Drag the pitcher onto a piece of equipment to begin. Use your handout to record what you measure.');
+ render();
+}
+
+S.addEventListener('pointerdown',e=>{
+ const el=e.target.closest('.it');if(!el)return;
+ const i=I[el.dataset.id];if(i.fx)return;
+ e.preventDefault();el.setPointerCapture(e.pointerId);
+ const r=S.getBoundingClientRect();
+ drag={i,ox:(e.clientX-r.left)/sc-i.x,oy:(e.clientY-r.top)/sc-i.y};
+ el.style.zIndex=50;el.classList.add('drag');
+});
+S.addEventListener('pointermove',e=>{
+ if(!drag)return;
+ const r=S.getBoundingClientRect(),i=drag.i;
+ i.x=cl((e.clientX-r.left)/sc-drag.ox,0,800-i.w);
+ i.y=cl((e.clientY-r.top)/sc-drag.oy,0,520-i.h);
+ pos();
+});
+const end=()=>{if(!drag)return;const i=drag.i;drag=null;drop(i)};
+S.addEventListener('pointerup',end);
+S.addEventListener('pointercancel',end);
+
+$('#modal').addEventListener('click',e=>{if(e.target.id=='modal'||e.target.hasAttribute('data-x'))$('#modal').classList.remove('on')});
+$('#bZoom').onclick=()=>modal('<h3>🔍 Close-up of the meniscus</h3>'+cylZoomSVG(I.cy.c.w)+'<p style="font-size:13px;color:#445">Read the volume at the bottom of the curve — the meniscus — at eye level.</p>');
+$('#bHelp').onclick=()=>modal('<h3>Equipment</h3><table>'+[
+ ['Pitcher','Pours water — drag onto any container to fill it.'],
+ ['Test tube','16 × 150 mm; fills completely.'],
+ ['Plastic cup','Fills to its marked line.'],
+ ['250 mL beaker','Fills to its 150 mL mark.'],
+ ['Graduated cylinder','Measures volume up to 100 mL. Read the bottom of the meniscus.'],
+ ['Sink','Drag a filled container here to empty it.']
+].map(r=>`<tr><th>${r[0]}</th><td>${r[1]}</td></tr>`).join('')+'</table>');
+$('#reset').onclick=()=>init();
+
+const fit=()=>{sc=Math.min(1,$('#wrap').clientWidth/800);S.style.transform='scale('+sc+')';$('#wrap').style.height=520*sc+'px'};
+addEventListener('resize',fit);
+
+init();fit();
+})();
+</script>
+</body></html>
